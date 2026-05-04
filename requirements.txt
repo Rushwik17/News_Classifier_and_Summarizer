@@ -1,0 +1,8 @@
+beautifulsoup4==4.10.0
+feedparser==6.0.12
+huggingface_hub==0.25.1
+requests==2.32.4
+streamlit==1.57.0
+torch==2.4.1
+transformers==4.45.1
+sentencepiece==0.2.1
