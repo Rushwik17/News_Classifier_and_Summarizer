@@ -1,12 +1,14 @@
-from huggingface_hub import InferenceClient
+import os
 import hashlib
 import json
-import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from google import genai
 
 CACHE_PATH = "cache/summary_cache.json"
-HF_MODEL_NAME = "csebuetnlp/mT5_multilingual_XLSum"
+MAX_WORKERS = 5
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-client = InferenceClient(model=HF_MODEL_NAME)
+# ------------------ UTIL ------------------
 
 def hash_text(text):
     return hashlib.md5(text.encode("utf-8")).hexdigest()
@@ -23,48 +25,53 @@ def save_cache(cache):
     with open(CACHE_PATH, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
+def generate_summary(item, cache):
+    full_text = item.get("DESCRIPTION", "").strip()
+    if not full_text:
+        return "विवरण उपलब्ध नहीं है।"
+
+    key = hash_text(full_text)
+
+    if key in cache:
+        return cache[key]
+
+    prompt = f"""
+    इस समाचार का 4-5 वाक्यों में सटीक और तथ्यात्मक सारांश लिखें।
+    केवल दी गई जानकारी का उपयोग करें और कोई अतिरिक्त जानकारी न जोड़ें।
+
+    समाचार:
+    {full_text}
+    """
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+        summary = response.text.strip() if response.text else ""
+
+        if not summary:
+            summary = "सारांश उपलब्ध नहीं है।"
+
+    except Exception as e:
+        print(f"Gemini API error: {e}")
+        summary = "सारांश प्राप्त करने में समस्या हुई।"
+    cache[key] = summary
+    return summary
+
 def get_summaries_batch(data):
     cache = load_cache()
-    summaries = []
+    summaries = [None] * len(data)
 
-    for item in data:
-        full_text = item.get("DESCRIPTION", "").strip()
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {
+            executor.submit(generate_summary, item, cache): idx
+            for idx, item in enumerate(data)
+        }
 
-        if not full_text:
-            summaries.append("विवरण उपलब्ध नहीं है।")
-            continue
+        for future in as_completed(futures):
+            idx = futures[future]
+            summaries[idx] = future.result()
 
-        key = hash_text(full_text)
-        if key in cache:
-            summaries.append(cache[key])
-            continue
-
-        model_text = full_text[:500]
-        prompt = (
-            "इस समाचार का सटीक और तथ्यात्मक सारांश 4-5 वाक्यों में लिखें। "
-            "केवल दी गई जानकारी का उपयोग करें और अधूरा वाक्य न छोड़ें:\n"
-            + model_text
-        )
-
-        try:
-            response = client.text_generation(
-                prompt,
-                max_new_tokens=200,
-                temperature=0.3,
-                do_sample=False
-            )
-
-            summary = response.strip()
-
-            if not summary:
-                summary = "सारांश उपलब्ध नहीं है।"
-
-        except Exception as e:
-            print(f"HF API error: {e}")
-            summary = "सारांश प्राप्त करने में समस्या हुई।"
-
-        cache[key] = summary
-        summaries.append(summary)
     save_cache(cache)
-
     return summaries
