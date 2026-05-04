@@ -1,22 +1,12 @@
-from transformers import pipeline
-import torch
+from huggingface_hub import InferenceClient
 import hashlib
 import json
 import os
 
-DEVICE = 0 if torch.cuda.is_available() else -1
 CACHE_PATH = "cache/summary_cache.json"
-summarizer = None
+HF_MODEL_NAME = "csebuetnlp/mT5_multilingual_XLSum"
 
-def get_summarizer():
-    global summarizer
-    if summarizer is None:
-        summarizer = pipeline(
-            "summarization",
-            model="csebuetnlp/mT5_multilingual_XLSum",
-            device=DEVICE
-        )
-    return summarizer
+client = InferenceClient(model=HF_MODEL_NAME)
 
 def hash_text(text):
     return hashlib.md5(text.encode("utf-8")).hexdigest()
@@ -25,7 +15,6 @@ def load_cache():
     os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
     if not os.path.exists(CACHE_PATH):
         return {}
-    
     with open(CACHE_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -35,58 +24,47 @@ def save_cache(cache):
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
 def get_summaries_batch(data):
-    summarizer = get_summarizer()
     cache = load_cache()
-    keys = []
-    uncached_inputs = []
-    uncached_indices = []
+    summaries = []
 
-    for i, item in enumerate(data):
+    for item in data:
         full_text = item.get("DESCRIPTION", "").strip()
 
         if not full_text:
-            keys.append(None)
+            summaries.append("विवरण उपलब्ध नहीं है।")
             continue
 
         key = hash_text(full_text)
-        keys.append(key)
+        if key in cache:
+            summaries.append(cache[key])
+            continue
 
-        if key not in cache:
-            model_text = full_text[:500]
-
-            prompt = (
-                "इस समाचार का सटीक और तथ्यात्मक सारांश 4-5 वाक्यों में लिखें। "
-                "केवल दी गई जानकारी का उपयोग करें और अधूरा वाक्य न छोड़ें:\n"
-                + model_text
-            )
-
-            uncached_inputs.append(prompt)
-            uncached_indices.append(i)
-
-    if uncached_inputs:
-        outputs = summarizer(
-            uncached_inputs,
-            max_length=240,
-            min_length=80,
-            num_beams=4,
-            do_sample=False,
-            repetition_penalty=1.2,
-            length_penalty=1.2,
-            early_stopping=True,
-            batch_size=8
+        model_text = full_text[:500]
+        prompt = (
+            "इस समाचार का सटीक और तथ्यात्मक सारांश 4-5 वाक्यों में लिखें। "
+            "केवल दी गई जानकारी का उपयोग करें और अधूरा वाक्य न छोड़ें:\n"
+            + model_text
         )
 
-        for idx, output in zip(uncached_indices, outputs):
-            summary = output["summary_text"]
-            cache[keys[idx]] = summary
+        try:
+            response = client.text_generation(
+                prompt,
+                max_new_tokens=200,
+                temperature=0.3,
+                do_sample=False
+            )
 
-        save_cache(cache)
+            summary = response.strip()
 
-    summaries = []
-    for key in keys:
-        if key is None:
-            summaries.append("विवरण उपलब्ध नहीं है।")
-        else:
-            summaries.append(cache.get(key, "Error"))
+            if not summary:
+                summary = "सारांश उपलब्ध नहीं है।"
+
+        except Exception as e:
+            print(f"HF API error: {e}")
+            summary = "सारांश प्राप्त करने में समस्या हुई।"
+
+        cache[key] = summary
+        summaries.append(summary)
+    save_cache(cache)
 
     return summaries
