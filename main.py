@@ -105,11 +105,13 @@ def classify_and_summarize(data_path):
         for idx in range(len(data)):
             label = labels[idx]
             summary = summaries[idx]
-            All.append((label, summary))
+            title = data[idx].get("TITLE", "")
+            description = data[idx].get("DESCRIPTION", "")
+            All.append((label, summary, title, description))
 
             if label not in Classified:
                 Classified[label] = []
-            Classified[label].append(summary)
+            Classified[label].append((summary, title, description))
 
             f.write(f"{idx+1} : {label}\n")
             f.write(f"Summary : {summary}\n\n")
