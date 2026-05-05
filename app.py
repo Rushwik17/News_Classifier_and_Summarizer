@@ -387,7 +387,7 @@ if "data_loaded" not in st.session_state:
         <div class="loading-wrap">
             <div class="loading-spinner"></div>
             <div class="loading-title">Fetching latest Hindi news...</div>
-            <div class="loading-sub">Classifying and summarizing with AI -- this may take a moment</div>
+            <div class="loading-sub">Classifying and summarizing, this may take a moment</div>
         </div>
         """, unsafe_allow_html=True)
         with st.spinner(""):
